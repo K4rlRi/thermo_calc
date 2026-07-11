@@ -1,6 +1,8 @@
 import math
 import CoolProp.CoolProp as CP
 
+from support.visualization import plot_component_history
+
 class FluidState:
     def __init__(self, fluid_name: str):
         self.fluid = fluid_name
@@ -69,6 +71,12 @@ class ThermalObject:
         df = pd.DataFrame(self.history)
         df.index.name = "Iteration"
         return df
+    
+    def show_history(self):
+        """User-facing API to trigger the auxiliary plotting tool."""
+        df = self.get_history()
+        # Call the standalone helper function
+        plot_component_history(df, title=self.name)
 
 class SecondaryLoop:
     def __init__(self, fluid: str, m_flow: float, t_in: float, cp: float = 4184):

@@ -20,7 +20,7 @@ refrigerant.update_from_psat(2e5, quality=1)  # Start as saturated gas at low pr
 print("Simulating cycle...")
 state_1 = refrigerant
 
-for iteration in range(5): # In a real solver, you loop until state_1 stops changing
+for iteration in range(10): # In a real solver, you loop until state_1 stops changing
     state_2 = comp.pipe(state_1)
     state_3 = cond.pipe(state_2)
     state_4 = valve.pipe(state_3)
@@ -35,5 +35,5 @@ print(f"Heating Power Delivered: {cond.heat_transferred:.2f} W")
 print(f"Heat Pump COP: {cop:.2f}")
 print(f"Heating Water Output Temp: {floor_heating.t_out - 273.15:.2f} °C")
 
-print("Compressor", comp.get_history())
-print("Valve", valve.get_history())
+evap.show_history()
+comp.show_history()
