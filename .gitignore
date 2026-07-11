@@ -1,0 +1,21 @@
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environments (highly recommended)
+venv/
+.venv/
+env/
+
+# Ignore IDE/Editor specific configurations
+.vscode/
+.idea/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore OS-generated files
+.DS_Store
+Thumbs.db
