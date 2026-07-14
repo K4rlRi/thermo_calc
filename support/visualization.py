@@ -3,6 +3,46 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
+def plot_cycle_history(df: pd.DataFrame, title: str = "Heat Pump Cycle"):
+    """Plot the transient trajectories of a TransientCycleSolver run: refrigerant
+    and secondary-loop temperatures, refrigerant pressures, and mass flows vs time."""
+    if df.empty:
+        print(f"No history data available to plot for {title}.")
+        return
+
+    fig, axs = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+    fig.suptitle(title, fontsize=16, fontweight='bold')
+
+    # 1. Pressures
+    axs[0].plot(df["time"], df["p_cond"] / 1e5, color='crimson', label="Condenser")
+    axs[0].plot(df["time"], df["p_evap"] / 1e5, color='steelblue', label="Evaporator")
+    axs[0].set_ylabel("Pressure (bar)")
+    axs[0].set_title("Refrigerant pressure")
+    axs[0].legend()
+    axs[0].grid(True)
+
+    # 2. Temperatures: refrigerant (solid) vs secondary loop (dashed)
+    axs[1].plot(df["time"], df["t_cond"] - 273.15, color='crimson', label="Condenser refrigerant")
+    axs[1].plot(df["time"], df["t_cond_water"] - 273.15, color='crimson', linestyle='--', label="Condenser water")
+    axs[1].plot(df["time"], df["t_evap"] - 273.15, color='steelblue', label="Evaporator refrigerant")
+    axs[1].plot(df["time"], df["t_evap_water"] - 273.15, color='steelblue', linestyle='--', label="Evaporator water")
+    axs[1].set_ylabel("Temperature (°C)")
+    axs[1].set_title("Refrigerant vs secondary loop temperature")
+    axs[1].legend()
+    axs[1].grid(True)
+
+    # 3. Mass flows
+    axs[2].plot(df["time"], df["m_comp"], color='darkorange', label="Compressor")
+    axs[2].plot(df["time"], df["m_valve"], color='purple', linestyle='--', label="Expansion valve")
+    axs[2].set_ylabel("Mass flow (kg/s)")
+    axs[2].set_xlabel("Time (s)")
+    axs[2].set_title("Refrigerant mass flow")
+    axs[2].legend()
+    axs[2].grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
 def plot_component_history(df: pd.DataFrame, title: str):
     """Auxiliary function to plot thermodynamic states over iterations."""
     if df.empty:

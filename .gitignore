@@ -21,3 +21,5 @@ env/
 Thumbs.db
 
 # pytest.ini
+
+_basic_experiments/*

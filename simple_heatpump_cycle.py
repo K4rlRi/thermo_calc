@@ -1,39 +1,42 @@
 from models.thermal_objects import *
+from solver import *
 
 # 1. Setup Environment & Demands
-ground_source = SecondaryLoop(fluid="Water", m_flow=0.5, t_in=283.15)  # 10 °C ground water
-floor_heating = SecondaryLoop(fluid="Water", m_flow=0.3, t_in=303.15)  # 30 °C return heating flow
+mass_1 = FluidState("Water")
+mass_1.m_flow = 0.5  # 500 grams per second (ground source, evaporator supply)
+mass_1.update_from_tp(280, 101325)  # 6.85 °C ground water
+
+mass_2 = FluidState("Water")
+mass_2.m_flow = 0.3  # 300 grams per second (floor heating, condenser supply)
+mass_2.update_from_tp(303.15, 101325)  # 30 °C return heating flow
+
 
 # 2. Setup Cycle Components
-# Let's use R134a, evaporating at 2 bar (~ -10°C) and condensing at 12 bar (~ +46°C)
-comp = Compressor(p_max=12e5, m_flow_max=0.05)
-cond = HeatExchanger(area=2.0, k_value=500, connected_loop=floor_heating)
-valve = ExpansionValve(p_low=2e5)
-evap = HeatExchanger(area=2.5, k_value=400, connected_loop=ground_source)
+comp = Compressor(displacement=0.0005, isentropic_efficiency=0.8, name="Compressor")
+evap = HeatExchanger(area=2.5, k_value=700, secondary_mass=5.0, boundary_condition=mass_1, name="Evap")
+valve = ExpansionValve(flow_coefficient=0.0001, name="MainValve")
+cond = HeatExchanger(area=2.0, k_value=500, secondary_mass=5.0, boundary_condition=mass_2, name="Cond")
 
-# 3. Initialize the Fluid
-refrigerant = FluidState("R134a")
-refrigerant.m_flow = 0.03  # 30 grams per second
-refrigerant.update_from_psat(2e5, quality=1)  # Start as saturated gas at low pressure
+# 3. Initialize the condenser's and evaporator's own refrigerant charge volumes
+# (the compressor/valve meter flow between them but hold no state of their
+# own). Starting close to the pressures these should settle near for the given
+# secondary temperatures keeps the initial transient mild.
+condenser_volume = ChargeVolume(fluid="R134a", volume=0.005, initial_p=8e5, initial_quality=0.3)  # ~31 °C sat.
+evaporator_volume = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.3)  # ~-10 °C sat.
 
-# 4. Simulation Execution (The Chain)
+
+# 4. Simulation Execution. This system is stiff relative to a 0.1 s step (the
+# refrigerant volumes are small); dt=0.01 s was confirmed by halving until
+# results stopped changing, following the same convergence check Chi & Didion
+# used to settle on their own step size.
 print("Simulating cycle...")
-state_1 = refrigerant
 
-for iteration in range(10): # In a real solver, you loop until state_1 stops changing
-    state_2 = comp.pipe(state_1)
-    state_3 = cond.pipe(state_2)
-    state_4 = valve.pipe(state_3)
-    state_1 = evap.pipe(state_4) # Feeds back into compressor next iteration
+timestep = 0.01  # seconds
+solver = TransientCycleSolver(comp, cond, valve, evap, condenser_volume, evaporator_volume)
 
-# 5. Calculate Efficiency (COP)
-cop = cond.heat_transferred / comp.power_consumed
+n_steps = 6000  # 60 s
+for i in range(n_steps):
+    solver.step(dt=timestep, verbose=(i % 100 == 0 or i == n_steps - 1))
 
-print(f"--- Results ---")
-print(f"Compressor Power: {comp.power_consumed:.2f} W")
-print(f"Heating Power Delivered: {cond.heat_transferred:.2f} W")
-print(f"Heat Pump COP: {cop:.2f}")
-print(f"Heating Water Output Temp: {floor_heating.t_out - 273.15:.2f} °C")
-
-evap.show_history()
-comp.show_history()
+# 5. Visualize the transient trajectories
+solver.show_history()
