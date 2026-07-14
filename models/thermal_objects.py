@@ -68,7 +68,7 @@ class FluidState:
     def is_two_phase(self):
         return 0.0 < self.quality < 1.0
 
-class ThermalObject:
+class FlowNode:
     def __init__(self, name: str = None):
         # Fall back to the class name (e.g., "Compressor") if no custom name is given
         self.name = name or self.__class__.__name__
@@ -115,7 +115,8 @@ class ChargeVolume:
     coupled to the secondary loop's actual temperature.
     """
     def __init__(self, fluid: str, volume: float, initial_p: float, initial_quality: float,
-                 max_relative_step: float = 0.3):
+                 max_relative_step: float = 0.3, name: str = None):
+        self.name = name or "ChargeVolume"
         self.fluid = fluid
         self.volume = volume  # m^3, physical size of this side of the cycle
         self.max_relative_step = max_relative_step  # largest fractional change in m or U allowed per call
@@ -130,6 +131,13 @@ class ChargeVolume:
         self.h = None  # J/kg, bulk specific enthalpy (well-mixed assumption: outlet state = bulk state)
         self._refresh_derived_state()
 
+        # Graph-edge bookkeeping. A ChargeVolume never restricts flow on its own
+        # (only Compressor/ExpansionValve do that) - it just records what arrives
+        # and exposes the same rate as m_flow for whichever edge comes after it.
+        self.m_flow = 0.0
+        self.m_dot_in = 0.0
+        self.h_in = self.h
+
     def _refresh_derived_state(self):
         rho = self.m / self.volume
         u = self.U / self.m
@@ -137,11 +145,27 @@ class ChargeVolume:
         self.t = CP.PropsSI('T', 'D', rho, 'U', u, self.fluid)
         self.h = CP.PropsSI('H', 'D', rho, 'U', u, self.fluid)
 
-    def integrate(self, dm_dt: float, dU_dt: float, dt: float):
+    def __call__(self, in_charge: FlowNode, out_charge: FlowNode, dt: float):
+        """Record the inflow arriving from the previous edge in the ring and pass
+        it straight through as this node's own m_flow, for whichever edge comes
+        next to read - this only reflects what a non-metering node does; the
+        actual accumulation happens in integrate(), once every block's output
+        for this step is known."""
+        self.m_dot_in = in_charge.m_flow
+        self.h_in = in_charge.h
+        self.m_flow = self.m_dot_in
+
+    def integrate(self, out_charge: FlowNode, dt: float):
         # Bounded to a maximum fractional change per step, same rationale as the
         # earlier Compressor/ExpansionValve fixes: mismatched component sizing (or
         # an early transient far from the eventual operating point) can otherwise
         # swing m/U by a large factor in a single explicit-Euler step.
+        m_flow_out = out_charge.m_flow
+        dm_dt = self.m_dot_in - m_flow_out
+        # Energy leaving is carried at *this* volume's own bulk enthalpy (well-mixed
+        # assumption); energy entering is carried at the upstream stream's enthalpy.
+        dU_dt = self.m_dot_in * self.h_in - m_flow_out * self.h
+
         max_dm = self.max_relative_step * self.m
         dm = max(-max_dm, min(dm_dt * dt, max_dm))
         self.m = max(self.m + dm, 1e-6)  # keep strictly positive: U/m and m/V must stay defined
@@ -155,7 +179,8 @@ class ChargeVolume:
         self._refresh_derived_state()
 
 
-class HeatExchanger(ThermalObject):
+
+class HeatExchanger(FlowNode):
     """Heat exchange between one side of the refrigerant charge (a ChargeVolume)
     and a lumped, dynamically-integrated secondary fluid node.
 
@@ -169,6 +194,9 @@ class HeatExchanger(ThermalObject):
         self.secondary_mass = secondary_mass  # kg, secondary fluid charge held up in the exchanger
         self.reservoir2 = boundary_condition  # fixed upstream supply condition of the secondary loop (t_in, p, m_flow)
         self.state2 = boundary_condition.copy()  # evolving secondary-side bulk/outlet node
+        self.m_flow = 0.0
+        self.h = None
+        self.qdot = 0.0
 
     def _clamp_to_equilibrium(self, p: float, h_prev: float, h_candidate: float, t_other: float, fluid: str) -> float:
         """Prevent an explicit-Euler step from overshooting past the instantaneous
@@ -183,9 +211,9 @@ class HeatExchanger(ThermalObject):
         lo, hi = sorted((h_prev, h_limit))
         return min(max(h_candidate, lo), hi)
 
-    def exchange(self, refrigerant_side: ChargeVolume, m_flow_refrigerant: float, dt: float) -> float:
-        """Advance the secondary-side bulk state by dt and return Qdot (W),
-        positive meaning heat flows from the refrigerant side to the secondary side.
+    def __call__(self, in_charge: ChargeVolume, out_charge: ChargeVolume, dt: float):
+        """Advance the secondary-side bulk state by dt and set this node's own
+        m_flow/h (the refrigerant leaving toward out_charge).
 
         Follows Chi & Didion (Int. J. Refrigeration 5(3), 1982): while the
         refrigerant is two-phase its temperature is pinned near saturation
@@ -198,16 +226,21 @@ class HeatExchanger(ThermalObject):
         the unbounded UA*dT rate and runs away instead of self-limiting.
         """
         state2, reservoir2 = self.state2, self.reservoir2
-        t1, t2 = refrigerant_side.t, state2.t
+        t1, t2 = in_charge.t, state2.t
 
-        quality = CP.PropsSI('Q', 'P', refrigerant_side.p, 'H', refrigerant_side.h, refrigerant_side.fluid)
+        # A heat exchanger doesn't meter/restrict flow - whatever arrives from
+        # the upstream volume simply passes through.
+        m_flow_refrigerant = max(in_charge.m_flow, 1e-6)
+
+        quality = CP.PropsSI('Q', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
         if 0.0 <= quality <= 1.0:
             qdot = self.ua * (t1 - t2)  # W
         else:
-            cp1 = CP.PropsSI('C', 'P', refrigerant_side.p, 'H', refrigerant_side.h, refrigerant_side.fluid)
+            cp1 = CP.PropsSI('C', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
             c1 = max(m_flow_refrigerant * cp1, 1e-6)
             epsilon = 1.0 - math.exp(-self.ua / c1)
             qdot = epsilon * c1 * (t1 - t2)
+        self.qdot = qdot
 
         m2_in = reservoir2.m_flow
 
@@ -219,10 +252,18 @@ class HeatExchanger(ThermalObject):
         state2.update_from_ph(state2.p, h2_new)
         state2.m_flow = m2_in
 
-        return qdot
+        h_refrig_out = in_charge.h - (qdot / m_flow_refrigerant)
+
+        # Clamp outlet enthalpy to prevent unphysical subcooling/superheating past secondary fluid temp
+        h_refrig_out = self._clamp_to_equilibrium(in_charge.p, in_charge.h, h_refrig_out, t2, in_charge.fluid)
+
+        # Populate graph edge outputs for the solver - a specific enthalpy (J/kg),
+        # same units every other block uses for .h.
+        self.m_flow = m_flow_refrigerant
+        self.h = h_refrig_out
 
 
-class Compressor(ThermalObject):
+class Compressor(FlowNode):
     """Meters refrigerant from the low-side ChargeVolume into the high-side
     ChargeVolume. No longer owns a pressure state of its own: pressure is a
     property of the shared ChargeVolume it feeds."""
@@ -233,43 +274,49 @@ class Compressor(ThermalObject):
         self.eta_s = isentropic_efficiency
         self.speed_rpm = speed_rpm
         self.power_consumed = 0
+        self.m_flow = 0.0
+        self.h = None
 
-    def flows(self, low_side: ChargeVolume, high_side: ChargeVolume) -> tuple:
-        """Return (m_flow, h_discharge): mass leaves low_side (carrying
-        low_side.h) and enters high_side (carrying h_discharge) at this instant."""
+    def __call__(self, in_charge: ChargeVolume, out_charge: ChargeVolume, dt: float):
+        """Sets m_flow/h: mass leaves in_charge (the suction/low-pressure side,
+        carrying in_charge.h) and enters out_charge (the discharge/high-pressure
+        side, carrying the compressed enthalpy) at this instant."""
         speed_rps = self.speed_rpm / 60.0
-        density_in = CP.PropsSI('D', 'P', low_side.p, 'H', low_side.h, low_side.fluid)
+        density_in = CP.PropsSI('D', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
 
         # Volumetric efficiency drops toward zero as the compression ratio grows -
         # the stabilizing feedback a real compressor has: it throttles its own
         # throughput back down instead of continuing to force mass into an
         # already-overpressured high side.
-        pressure_ratio = high_side.p / max(low_side.p, 1e5)
+        pressure_ratio = out_charge.p / max(in_charge.p, 1e5)
         vol_efficiency = max(0.0, min(0.95, 0.95 - 0.05 * pressure_ratio))
 
         m_flow = self.displacement * speed_rps * density_in * vol_efficiency
 
-        s_in = CP.PropsSI('S', 'P', low_side.p, 'H', low_side.h, low_side.fluid)
-        h_ideal = CP.PropsSI('H', 'P', high_side.p, 'S', s_in, low_side.fluid)
-        h_real = low_side.h + (h_ideal - low_side.h) / self.eta_s
+        s_in = CP.PropsSI('S', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
+        h_ideal = CP.PropsSI('H', 'P', out_charge.p, 'S', s_in, in_charge.fluid)
+        h_real = in_charge.h + (h_ideal - in_charge.h) / self.eta_s
 
-        self.power_consumed = m_flow * (h_real - low_side.h)
+        self.power_consumed = m_flow * (h_real - in_charge.h)
+        self.m_flow = m_flow
+        self.h = h_real
 
-        return m_flow, h_real
 
-
-class ExpansionValve(ThermalObject):
+class ExpansionValve(FlowNode):
     """Meters refrigerant from the high-side ChargeVolume into the low-side
     ChargeVolume via isenthalpic throttling. No longer owns a pressure state
     of its own: pressure is a property of the shared ChargeVolume it feeds."""
     def __init__(self, flow_coefficient: float, name='ExpansionValve'):
         super().__init__(name)
         self.kv = flow_coefficient    # Valve sizing flow coefficient
+        self.m_flow = 0.0
+        self.h = None
 
-    def flows(self, high_side: ChargeVolume, low_side: ChargeVolume) -> float:
-        """Return m_flow: mass leaves high_side and enters low_side, both
-        carrying high_side.h (isenthalpic throttling)."""
-        density_in = CP.PropsSI('D', 'P', high_side.p, 'H', high_side.h, high_side.fluid)
-        pressure_drop = max(high_side.p - low_side.p, 1000.0)  # guard against negative square roots
-
-        return self.kv * math.sqrt(pressure_drop * density_in)
+    def __call__(self, in_charge: ChargeVolume, out_charge: ChargeVolume, dt: float):
+        """Sets m_flow/h: mass leaves in_charge (high pressure) and enters
+        out_charge (low pressure), both carrying in_charge.h (isenthalpic
+        throttling)."""
+        density_in = CP.PropsSI('D', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
+        pressure_drop = max(in_charge.p - out_charge.p, 1000.0)  # guard against negative square roots
+        self.m_flow = self.kv * math.sqrt(pressure_drop * density_in)
+        self.h = in_charge.h

@@ -5,35 +5,46 @@ import pandas as pd
 
 def plot_cycle_history(df: pd.DataFrame, title: str = "Heat Pump Cycle"):
     """Plot the transient trajectories of a TransientCycleSolver run: refrigerant
-    and secondary-loop temperatures, refrigerant pressures, and mass flows vs time."""
+    and secondary-loop temperatures, refrigerant pressures, and mass flows vs time.
+
+    Column names are discovered by prefix (p_<name>, t_<name>, t_secondary_<name>,
+    m_flow_<name>) so this works for any block_list the solver was built with,
+    not just a fixed condenser/evaporator pair.
+    """
     if df.empty:
         print(f"No history data available to plot for {title}.")
         return
+
+    p_cols = [c for c in df.columns if c.startswith("p_")]
+    t_secondary_cols = [c for c in df.columns if c.startswith("t_secondary_")]
+    t_cols = [c for c in df.columns if c.startswith("t_") and c not in t_secondary_cols]
+    m_flow_cols = [c for c in df.columns if c.startswith("m_flow_")]
 
     fig, axs = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
     fig.suptitle(title, fontsize=16, fontweight='bold')
 
     # 1. Pressures
-    axs[0].plot(df["time"], df["p_cond"] / 1e5, color='crimson', label="Condenser")
-    axs[0].plot(df["time"], df["p_evap"] / 1e5, color='steelblue', label="Evaporator")
+    for c in p_cols:
+        axs[0].plot(df["time"], df[c] / 1e5, label=c.removeprefix("p_"))
     axs[0].set_ylabel("Pressure (bar)")
     axs[0].set_title("Refrigerant pressure")
     axs[0].legend()
     axs[0].grid(True)
 
     # 2. Temperatures: refrigerant (solid) vs secondary loop (dashed)
-    axs[1].plot(df["time"], df["t_cond"] - 273.15, color='crimson', label="Condenser refrigerant")
-    axs[1].plot(df["time"], df["t_cond_water"] - 273.15, color='crimson', linestyle='--', label="Condenser water")
-    axs[1].plot(df["time"], df["t_evap"] - 273.15, color='steelblue', label="Evaporator refrigerant")
-    axs[1].plot(df["time"], df["t_evap_water"] - 273.15, color='steelblue', linestyle='--', label="Evaporator water")
+    for c in t_cols:
+        axs[1].plot(df["time"], df[c] - 273.15, label=c.removeprefix("t_"))
+    for c in t_secondary_cols:
+        axs[1].plot(df["time"], df[c] - 273.15, linestyle='--',
+                    label=c.removeprefix("t_secondary_") + " (secondary)")
     axs[1].set_ylabel("Temperature (°C)")
     axs[1].set_title("Refrigerant vs secondary loop temperature")
     axs[1].legend()
     axs[1].grid(True)
 
     # 3. Mass flows
-    axs[2].plot(df["time"], df["m_comp"], color='darkorange', label="Compressor")
-    axs[2].plot(df["time"], df["m_valve"], color='purple', linestyle='--', label="Expansion valve")
+    for c in m_flow_cols:
+        axs[2].plot(df["time"], df[c], label=c.removeprefix("m_flow_"))
     axs[2].set_ylabel("Mass flow (kg/s)")
     axs[2].set_xlabel("Time (s)")
     axs[2].set_title("Refrigerant mass flow")

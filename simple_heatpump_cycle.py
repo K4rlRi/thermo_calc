@@ -21,8 +21,10 @@ cond = HeatExchanger(area=2.0, k_value=500, secondary_mass=5.0, boundary_conditi
 # (the compressor/valve meter flow between them but hold no state of their
 # own). Starting close to the pressures these should settle near for the given
 # secondary temperatures keeps the initial transient mild.
-condenser_volume = ChargeVolume(fluid="R134a", volume=0.005, initial_p=8e5, initial_quality=0.3)  # ~31 °C sat.
-evaporator_volume = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.3)  # ~-10 °C sat.
+volume_comp_cond = ChargeVolume(fluid="R134a", volume=0.005, initial_p=8e5, initial_quality=0.3, name="Comp-Cond")  # ~31 °C sat.
+volume_cond_valve = ChargeVolume(fluid="R134a", volume=0.005, initial_p=8e5, initial_quality=0.3, name="Cond-Valve")  # ~31 °C sat.
+volume_valve_evap = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.3, name="Valve-Evap")  # ~-10 °C sat.
+volume_evap_comp = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.3, name="Evap-Comp")  # ~-10 °C sat.
 
 
 # 4. Simulation Execution. This system is stiff relative to a 0.1 s step (the
@@ -32,7 +34,7 @@ evaporator_volume = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, ini
 print("Simulating cycle...")
 
 timestep = 0.01  # seconds
-solver = TransientCycleSolver(comp, cond, valve, evap, condenser_volume, evaporator_volume)
+solver = TransientCycleSolver([comp, volume_comp_cond, cond, volume_cond_valve, valve,  volume_valve_evap, evap, volume_evap_comp])
 
 n_steps = 6000  # 60 s
 for i in range(n_steps):
