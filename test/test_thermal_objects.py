@@ -20,7 +20,7 @@ def test_compressor_increases_pressure_and_enthalpy():
 
     h_out1 = volume_out.h
     p_out1 = volume_out.p
-    m_dot_out1 = volume_in.m_flow
+    m_dot_out1 = volume_in.m_dot_out
 
 
     for i in range(5):

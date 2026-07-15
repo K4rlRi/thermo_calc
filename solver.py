@@ -37,7 +37,7 @@ class TransientCycleSolver:
                 if isinstance(block, HeatExchanger):
                     self.history[f"t_secondary_{block.name}"] = []
 
-    def step(self, dt: float, verbose: bool = True):
+    def step(self, dt: float, verbose: bool = False):
         n = len(self.block_list)
 
         # Phase 1: every block computes its own m_flow/h from its neighbours'

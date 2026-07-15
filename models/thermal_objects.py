@@ -134,7 +134,7 @@ class ChargeVolume:
         # Graph-edge bookkeeping. A ChargeVolume never restricts flow on its own
         # (only Compressor/ExpansionValve do that) - it just records what arrives
         # and exposes the same rate as m_flow for whichever edge comes after it.
-        self.m_flow = 0.0
+        self.m_dot_out = 0.0
         self.m_dot_in = 0.0
         self.h_in = self.h
 
@@ -153,7 +153,7 @@ class ChargeVolume:
         for this step is known."""
         self.m_dot_in = in_charge.m_flow
         self.h_in = in_charge.h
-        self.m_flow = self.m_dot_in
+        self.m_dot_out = self.m_dot_in
 
     def integrate(self, out_charge: FlowNode, dt: float):
         # Bounded to a maximum fractional change per step, same rationale as the
@@ -230,7 +230,7 @@ class HeatExchanger(FlowNode):
 
         # A heat exchanger doesn't meter/restrict flow - whatever arrives from
         # the upstream volume simply passes through.
-        m_flow_refrigerant = max(in_charge.m_flow, 1e-6)
+        m_flow_refrigerant = max(in_charge.m_dot_out, 1e-6)
 
         quality = CP.PropsSI('Q', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
         if 0.0 <= quality <= 1.0:
