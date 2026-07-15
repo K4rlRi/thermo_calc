@@ -13,6 +13,7 @@ from models.thermal_objects import *
 
 def test_compressor_increases_pressure_and_enthalpy():
     dt = 0.01
+    # Two Volumes with same starting pressure, connected to each other and a compressor
     volume_in = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=1.0, name="in") 
     comp = Compressor(displacement=0.0005, isentropic_efficiency=0.8, name="Compressor")
     volume_out = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality = 1.0, name="out") 
@@ -34,6 +35,8 @@ def test_compressor_increases_pressure_and_enthalpy():
     p_out2 = volume_out.p
     m_dot_in2 = volume_out.m_dot_in
 
+    # the compressor creates a pressure delta between the two, in the beginning equal pressure, reservoirs
+    # creating the p difference uses power and increases the enthalpy
     print(f"h before, after: {h_out1}, {h_out2}")
     print(f"p before, after: {p_out1}, {p_out2}")
     print(f"m_dot before, after: {m_dot_out1}, {m_dot_in2}")
@@ -41,7 +44,39 @@ def test_compressor_increases_pressure_and_enthalpy():
     assert h_out2 > h_out1
     assert p_out2 > p_out1
     assert m_dot_in2 > m_dot_out1
-
-
     assert comp.power_consumed > 0
 
+
+
+def test_expansion_valve_decreases_pressure_and_conserves_enthalpy():
+    dt = 0.01
+    # High-pressure subcooled liquid feeding the valve (e.g. condenser outlet)
+    volume_in = ChargeVolume(fluid="R134a", volume=0.008, initial_p=8e5, initial_quality=0.0, name="in")
+    valve = ExpansionValve(flow_coefficient=1e-6, name="ExpansionValve")
+    # Low-pressure two-phase mixture downstream of the valve
+    volume_out = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.3, name="out")
+
+    p_in1 = volume_in.p
+    p_out1 = volume_out.p
+
+    for i in range(5):
+        volume_in(volume_out, valve, dt)
+        valve(volume_in, volume_out, dt=dt)
+        # Isenthalpic throttling: tno work and no heat exchange, enthalpy leaving = enthalpy that arrived
+        assert valve.h == volume_in.h
+        volume_out(valve, volume_in, dt)
+
+        volume_in.integrate(valve, dt)
+        volume_out.integrate(volume_in, dt)
+
+    p_in2 = volume_in.p
+    p_out2 = volume_out.p
+
+    print(f"p_in before, after: {p_in1}, {p_in2}")
+    print(f"p_out before, after: {p_out1}, {p_out2}")
+    print(f"valve m_flow: {valve.m_flow}")
+
+    assert p_out1 < p_in1
+    # Mass/energy leaves the high p side and arrives at the low p side, so the pressure gap across the valve narrows over time.
+    assert (p_in2 - p_out2) < (p_in1 - p_out1)
+    assert valve.m_flow > 0
