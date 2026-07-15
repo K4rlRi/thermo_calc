@@ -4,16 +4,16 @@ from solver import *
 # 1. Setup Environment & Demands
 mass_1 = FluidState("Water")
 mass_1.m_flow = 0.5  # 500 grams per second (ground source, evaporator supply)
-mass_1.update_from_tp(280, 101325)  # 6.85 °C ground water
+mass_1.update_from_tp(273.15+10, 101325)  # 6.85 °C ground water
 
 mass_2 = FluidState("Water")
 mass_2.m_flow = 0.3  # 300 grams per second (floor heating, condenser supply)
-mass_2.update_from_tp(303.15, 101325)  # 30 °C return heating flow
+mass_2.update_from_tp(273.15+25, 101325)  # 30 °C return heating flow
 
 refrigerent = "R134a"
 
 # 2. Setup Cycle Components
-comp = Compressor(displacement=0.0005, isentropic_efficiency=0.8, name="Compressor")
+comp = Compressor(displacement=0.0005, isentropic_efficiency=0.8, speed_rpm=3500, name="Compressor")
 evap = HeatExchanger(area=2.5, k_value=700, secondary_mass=5.0, boundary_condition=mass_1, name="Evap")
 valve = ExpansionValve(flow_coefficient=0.0001, name="MainValve")
 cond = HeatExchanger(area=2.0, k_value=500, secondary_mass=5.0, boundary_condition=mass_2, name="Cond")

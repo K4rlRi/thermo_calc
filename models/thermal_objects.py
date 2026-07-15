@@ -134,9 +134,10 @@ class ChargeVolume:
         # Graph-edge bookkeeping. A ChargeVolume never restricts flow on its own
         # (only Compressor/ExpansionValve do that) - it just records what arrives
         # and exposes the same rate as m_flow for whichever edge comes after it.
-        self.m_dot_out = 0.0
         self.m_dot_in = 0.0
+        self.m_dot_out = 0.0
         self.h_in = self.h
+        self.out_charge: FlowNode = None
 
     def _refresh_derived_state(self):
         rho = self.m / self.volume
@@ -145,29 +146,40 @@ class ChargeVolume:
         self.t = CP.PropsSI('T', 'D', rho, 'U', u, self.fluid)
         self.h = CP.PropsSI('H', 'D', rho, 'U', u, self.fluid)
 
-    def __call__(self, in_charge: FlowNode, out_charge: FlowNode, dt: float):
+    def __call__(self, in_charge: FlowNode| ChargeVolume, out_charge: FlowNode| ChargeVolume, dt: float):
         """Record the inflow arriving from the previous edge in the ring and pass
         it straight through as this node's own m_flow, for whichever edge comes
         next to read - this only reflects what a non-metering node does; the
         actual accumulation happens in integrate(), once every block's output
         for this step is known."""
-        self.m_dot_in = in_charge.m_flow
-        self.h_in = in_charge.h
+        if isinstance(in_charge, FlowNode):
+            self.m_dot_in = in_charge.m_flow
+        else:
+            self.m_dot_in = in_charge.m_dot_out
         self.m_dot_out = self.m_dot_in
+        self.h_in = in_charge.h
+        self.out_charge = out_charge
 
-    def integrate(self, out_charge: FlowNode, dt: float):
+        
+
+    def integrate(self, dt: float):
         # Bounded to a maximum fractional change per step, same rationale as the
         # earlier Compressor/ExpansionValve fixes: mismatched component sizing (or
         # an early transient far from the eventual operating point) can otherwise
         # swing m/U by a large factor in a single explicit-Euler step.
-        m_flow_out = out_charge.m_flow
-        dm_dt = self.m_dot_in - m_flow_out
+        if isinstance(self.out_charge, FlowNode):
+            m_dot_out = self.out_charge.m_flow
+        else: 
+            m_dot_out = self.out_charge.m_dot_in
+
+        dm_dt = self.m_dot_in - m_dot_out
         # Energy leaving is carried at *this* volume's own bulk enthalpy (well-mixed
         # assumption); energy entering is carried at the upstream stream's enthalpy.
-        dU_dt = self.m_dot_in * self.h_in - m_flow_out * self.h
+        dU_dt = self.m_dot_in * self.h_in - m_dot_out * self.h
 
         max_dm = self.max_relative_step * self.m
-        dm = max(-max_dm, min(dm_dt * dt, max_dm))
+        dm = dm_dt * dt
+        dm = max(-max_dm, min(dm, max_dm))
         self.m = max(self.m + dm, 1e-6)  # keep strictly positive: U/m and m/V must stay defined
 
         max_dU = self.max_relative_step * abs(self.U)
@@ -192,8 +204,8 @@ class HeatExchanger(FlowNode):
         super().__init__(name)
         self.ua = area * k_value
         self.secondary_mass = secondary_mass  # kg, secondary fluid charge held up in the exchanger
-        self.reservoir2 = boundary_condition  # fixed upstream supply condition of the secondary loop (t_in, p, m_flow)
-        self.state2 = boundary_condition.copy()  # evolving secondary-side bulk/outlet node
+        self.reservoir_in = boundary_condition  # fixed upstream supply condition of the secondary loop (t_in, p, m_flow)
+        self.reservoir_out = boundary_condition.copy()  # evolving secondary-side bulk/outlet node
         self.m_flow = 0.0
         self.h = None
         self.qdot = 0.0
@@ -225,37 +237,38 @@ class HeatExchanger(FlowNode):
         this split, a superheated refrigerant stream keeps absorbing heat at
         the unbounded UA*dT rate and runs away instead of self-limiting.
         """
-        state2, reservoir2 = self.state2, self.reservoir2
-        t1, t2 = in_charge.t, state2.t
+        reservoir_out, reservoir_in = self.reservoir_out, self.reservoir_in
+        t_refr_in, t_reservoir_out = in_charge.t, reservoir_out.t
 
-        # A heat exchanger doesn't meter/restrict flow - whatever arrives from
-        # the upstream volume simply passes through.
-        m_flow_refrigerant = max(in_charge.m_dot_out, 1e-6)
+        average_delta_t = t_refr_in - t_reservoir_out
 
+        m_flow_refrigerant = max(in_charge.m_dot_out, 1e-6) # get refrigerent mass flow from upstream volume, safety lower boundary
         quality = CP.PropsSI('Q', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
-        if 0.0 <= quality <= 1.0:
-            qdot = self.ua * (t1 - t2)  # W
-        else:
+
+
+        if 0.0 <= quality <= 1.0: # if two phase, infinite heat capacity (cp)
+            qdot = self.ua * average_delta_t  # W
+        else: # single phase, heat capacity calculated from state
             cp1 = CP.PropsSI('C', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
             c1 = max(m_flow_refrigerant * cp1, 1e-6)
             epsilon = 1.0 - math.exp(-self.ua / c1)
-            qdot = epsilon * c1 * (t1 - t2)
+            qdot = epsilon * c1 * average_delta_t
         self.qdot = qdot
 
-        m2_in = reservoir2.m_flow
+        m_dot_reservoir_in = reservoir_in.m_flow
 
         # Open control-volume energy balance for the secondary node: net heat duty
         # plus convective exchange with the reservoir flow feeding it.
-        dh2_dt = (qdot + m2_in * (reservoir2.h - state2.h)) / self.secondary_mass
-        h2_new = self._clamp_to_equilibrium(state2.p, state2.h, state2.h + dh2_dt * dt, t1, state2.fluid)
+        dh_dt_reservoir = (qdot + m_dot_reservoir_in * (reservoir_in.h - reservoir_out.h)) / self.secondary_mass
+        h_reservoir_new = self._clamp_to_equilibrium(reservoir_out.p, reservoir_out.h, reservoir_out.h + dh_dt_reservoir * dt, t_refr_in, reservoir_out.fluid)
 
-        state2.update_from_ph(state2.p, h2_new)
-        state2.m_flow = m2_in
+        reservoir_out.update_from_ph(reservoir_out.p, h_reservoir_new)
+        reservoir_out.m_flow = m_dot_reservoir_in
 
         h_refrig_out = in_charge.h - (qdot / m_flow_refrigerant)
 
         # Clamp outlet enthalpy to prevent unphysical subcooling/superheating past secondary fluid temp
-        h_refrig_out = self._clamp_to_equilibrium(in_charge.p, in_charge.h, h_refrig_out, t2, in_charge.fluid)
+        h_refrig_out = self._clamp_to_equilibrium(in_charge.p, in_charge.h, h_refrig_out, t_reservoir_out, in_charge.fluid)
 
         # Populate graph edge outputs for the solver - a specific enthalpy (J/kg),
         # same units every other block uses for .h.

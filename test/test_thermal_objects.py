@@ -28,8 +28,8 @@ def test_compressor_increases_pressure_and_enthalpy():
         comp(volume_in, volume_out, dt = dt)
         volume_out(comp, volume_in, dt)
 
-        volume_in.integrate(comp, dt)
-        volume_out.integrate(volume_in, dt)
+        volume_in.integrate( dt)
+        volume_out.integrate( dt)
 
     h_out2 = volume_out.h
     p_out2 = volume_out.p
@@ -65,8 +65,8 @@ def test_expansion_valve_decreases_pressure_and_conserves_enthalpy():
         assert valve.h == volume_in.h
         volume_out(valve, volume_in, dt)
 
-        volume_in.integrate(valve, dt)
-        volume_out.integrate(volume_in, dt)
+        volume_in.integrate(dt)
+        volume_out.integrate( dt)
 
     p_in2 = volume_in.p
     p_out2 = volume_out.p
@@ -103,8 +103,8 @@ def test_heatexchanger_transfers_heat_into_refrigerent_cycle():
         assert exchanger.h  > volume_in.h
         volume_out(exchanger, volume_in, dt)
 
-        volume_in.integrate(exchanger, dt)
-        volume_out.integrate(volume_in, dt)
+        volume_in.integrate( dt)
+        volume_out.integrate( dt)
 
     p_in2 = volume_in.p
     p_out2 = volume_out.p

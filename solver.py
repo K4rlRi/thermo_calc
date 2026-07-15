@@ -51,8 +51,7 @@ class TransientCycleSolver:
         # in/out flow for this step is known.
         for i, block in enumerate(self.block_list):
             if isinstance(block, ChargeVolume):
-                out_charge = self.block_list[(i + 1) % n]
-                block.integrate(out_charge, dt)
+                block.integrate( dt)
 
         self.time += dt
 
@@ -64,7 +63,7 @@ class TransientCycleSolver:
             else:
                 self.history[f"m_flow_{block.name}"].append(block.m_flow)
                 if isinstance(block, HeatExchanger):
-                    self.history[f"t_secondary_{block.name}"].append(block.state2.t)
+                    self.history[f"t_secondary_{block.name}"].append(block.reservoir_out.t)
 
         if verbose:
             parts = [f"{b.name}: {b.p/1e5:.2f} bar, {b.t-273.15:.1f} °C"
