@@ -36,6 +36,7 @@ class TransientCycleSolver:
                 self.history[f"m_flow_{block.name}"] = []
                 if isinstance(block, HeatExchanger):
                     self.history[f"t_secondary_{block.name}"] = []
+                    self.history[f"qdot_{block.name}"] = []
 
     def step(self, dt: float, verbose: bool = False):
         n = len(self.block_list)
@@ -64,9 +65,10 @@ class TransientCycleSolver:
                 self.history[f"m_flow_{block.name}"].append(block.m_flow)
                 if isinstance(block, HeatExchanger):
                     self.history[f"t_secondary_{block.name}"].append(block.reservoir_out.t)
+                    self.history[f"qdot_{block.name}"].append(block.qdot)
 
         if verbose:
-            parts = [f"{b.name}: {b.p/1e5:.2f} bar, {b.t-273.15:.1f} °C"
+            parts = [f"{b.name}: {b.p/1e5:.2f} bar, {b.t-273.15:.1f} °C, quality {b.q}"
                      for b in self.block_list if isinstance(b, ChargeVolume)]
             print(f"Time: {self.time:.3f}s | " + " | ".join(parts))
 

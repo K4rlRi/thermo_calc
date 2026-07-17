@@ -129,6 +129,7 @@ class ChargeVolume:
         self.p = None  # Pa
         self.t = None  # K
         self.h = None  # J/kg, bulk specific enthalpy (well-mixed assumption: outlet state = bulk state)
+        self.q = None
         self._refresh_derived_state()
 
         # Graph-edge bookkeeping. A ChargeVolume never restricts flow on its own
@@ -139,12 +140,17 @@ class ChargeVolume:
         self.h_in = self.h
         self.out_charge: FlowNode = None
 
+
     def _refresh_derived_state(self):
         rho = self.m / self.volume
         u = self.U / self.m
         self.p = CP.PropsSI('P', 'D', rho, 'U', u, self.fluid)
         self.t = CP.PropsSI('T', 'D', rho, 'U', u, self.fluid)
         self.h = CP.PropsSI('H', 'D', rho, 'U', u, self.fluid)
+        self.q = CP.PropsSI('Q', 'D', rho, 'U', u, self.fluid)
+
+
+
 
     def __call__(self, in_charge: FlowNode| ChargeVolume, out_charge: FlowNode| ChargeVolume, dt: float):
         """Record the inflow arriving from the previous edge in the ring and pass
@@ -200,12 +206,13 @@ class HeatExchanger(FlowNode):
     separate regions along the exchanger.
     """
     def __init__(self, area: float, k_value: float, secondary_mass: float,
-                 boundary_condition: FluidState, name='HeatExchanger'):
+                 boundary_condition: FluidState, pipe_kv: float = 0.0007, name='HeatExchanger'):
         super().__init__(name)
         self.ua = area * k_value
         self.secondary_mass = secondary_mass  # kg, secondary fluid charge held up in the exchanger
         self.reservoir_in = boundary_condition  # fixed upstream supply condition of the secondary loop (t_in, p, m_flow)
         self.reservoir_out = boundary_condition.copy()  # evolving secondary-side bulk/outlet node
+        self.pipe_kv = pipe_kv  # flow coefficient of the connecting tube; large relative to ExpansionValve.kv
         self.m_flow = 0.0
         self.h = None
         self.qdot = 0.0
@@ -227,6 +234,11 @@ class HeatExchanger(FlowNode):
         """Advance the secondary-side bulk state by dt and set this node's own
         m_flow/h (the refrigerant leaving toward out_charge).
 
+        Sign convention for qdot: positive means heat flows *into* the
+        refrigerant (the standard thermodynamic convention, Q > 0 when heat is
+        added to the system) - so a condenser (rejecting heat) shows negative
+        qdot, an evaporator (absorbing heat) shows positive qdot.
+
         Follows Chi & Didion (Int. J. Refrigeration 5(3), 1982): while the
         refrigerant is two-phase its temperature is pinned near saturation
         (effectively infinite capacity rate), so heat transfer is plain
@@ -240,17 +252,28 @@ class HeatExchanger(FlowNode):
         reservoir_out, reservoir_in = self.reservoir_out, self.reservoir_in
         t_refr_in, t_reservoir_out = in_charge.t, reservoir_out.t
 
-        average_delta_t = t_refr_in - t_reservoir_out
+        average_delta_t = t_reservoir_out - t_refr_in
 
-        m_flow_refrigerant = max(in_charge.m_dot_out, 1e-6) # get refrigerent mass flow from upstream volume, safety lower boundary
+        # The connecting tube has real, if very low, flow resistance - a pure
+        # pass-through would make the *upstream* ChargeVolume's own mass balance
+        # identically zero (whatever flows in is defined to instantly flow back
+        # out again), freezing its density forever at its initial guess
+        # regardless of what the rest of the loop does. pipe_kv is chosen large
+        # relative to ExpansionValve.kv so this barely restricts flow in normal
+        # operation, but a real (small) pressure difference between the two
+        # flanking volumes now drives a real, computable mass flow instead.
+        delta_p = in_charge.p - out_charge.p
+        density_ref = CP.PropsSI('D', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
+        m_flow_refrigerant = math.copysign(self.pipe_kv * math.sqrt(abs(delta_p) * density_ref), delta_p)
+        m_flow_magnitude = max(abs(m_flow_refrigerant), 1e-6)
+
         quality = CP.PropsSI('Q', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
-
 
         if 0.0 <= quality <= 1.0: # if two phase, infinite heat capacity (cp)
             qdot = self.ua * average_delta_t  # W
         else: # single phase, heat capacity calculated from state
             cp1 = CP.PropsSI('C', 'P', in_charge.p, 'H', in_charge.h, in_charge.fluid)
-            c1 = max(m_flow_refrigerant * cp1, 1e-6)
+            c1 = max(m_flow_magnitude * cp1, 1e-6)
             epsilon = 1.0 - math.exp(-self.ua / c1)
             qdot = epsilon * c1 * average_delta_t
         self.qdot = qdot
@@ -258,20 +281,23 @@ class HeatExchanger(FlowNode):
         m_dot_reservoir_in = reservoir_in.m_flow
 
         # Open control-volume energy balance for the secondary node: net heat duty
-        # plus convective exchange with the reservoir flow feeding it.
-        dh_dt_reservoir = (qdot + m_dot_reservoir_in * (reservoir_in.h - reservoir_out.h)) / self.secondary_mass
+        # (secondary loses what the refrigerant gains, hence -qdot) plus
+        # convective exchange with the reservoir flow feeding it.
+        dh_dt_reservoir = (-qdot + m_dot_reservoir_in * (reservoir_in.h - reservoir_out.h)) / self.secondary_mass
         h_reservoir_new = self._clamp_to_equilibrium(reservoir_out.p, reservoir_out.h, reservoir_out.h + dh_dt_reservoir * dt, t_refr_in, reservoir_out.fluid)
 
         reservoir_out.update_from_ph(reservoir_out.p, h_reservoir_new)
         reservoir_out.m_flow = m_dot_reservoir_in
 
-        h_refrig_out = in_charge.h - (qdot / m_flow_refrigerant)
+        h_refrig_out = in_charge.h + (qdot / m_flow_magnitude)
 
         # Clamp outlet enthalpy to prevent unphysical subcooling/superheating past secondary fluid temp
         h_refrig_out = self._clamp_to_equilibrium(in_charge.p, in_charge.h, h_refrig_out, t_reservoir_out, in_charge.fluid)
 
         # Populate graph edge outputs for the solver - a specific enthalpy (J/kg),
-        # same units every other block uses for .h.
+        # same units every other block uses for .h. m_flow is signed: negative
+        # means the pipe is momentarily carrying net mass back from out_charge
+        # toward in_charge.
         self.m_flow = m_flow_refrigerant
         self.h = h_refrig_out
 

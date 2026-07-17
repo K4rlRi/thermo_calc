@@ -19,8 +19,9 @@ def plot_cycle_history(df: pd.DataFrame, title: str = "Heat Pump Cycle"):
     t_secondary_cols = [c for c in df.columns if c.startswith("t_secondary_")]
     t_cols = [c for c in df.columns if c.startswith("t_") and c not in t_secondary_cols]
     m_flow_cols = [c for c in df.columns if c.startswith("m_flow_")]
+    qdot_cols = [c for c in df.columns if c.startswith("qdot_")]
 
-    fig, axs = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+    fig, axs = plt.subplots(4, 1, figsize=(10, 13), sharex=True)
     fig.suptitle(title, fontsize=16, fontweight='bold')
 
     # 1. Pressures
@@ -46,10 +47,19 @@ def plot_cycle_history(df: pd.DataFrame, title: str = "Heat Pump Cycle"):
     for c in m_flow_cols:
         axs[2].plot(df["time"], df[c], label=c.removeprefix("m_flow_"))
     axs[2].set_ylabel("Mass flow (kg/s)")
-    axs[2].set_xlabel("Time (s)")
     axs[2].set_title("Refrigerant mass flow")
     axs[2].legend()
     axs[2].grid(True)
+
+    # 4. Heat exchanger duty (Qdot), positive = refrigerant side loses heat to secondary
+    for c in qdot_cols:
+        axs[3].plot(df["time"], df[c], label=c.removeprefix("qdot_"))
+    axs[3].axhline(0, color='gray', linewidth=0.8)
+    axs[3].set_ylabel("Qdot (W)")
+    axs[3].set_xlabel("Time (s)")
+    axs[3].set_title("Heat exchanger duty")
+    axs[3].legend()
+    axs[3].grid(True)
 
     plt.tight_layout()
     plt.show()
