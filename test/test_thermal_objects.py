@@ -81,48 +81,53 @@ def test_expansion_valve_decreases_pressure_and_conserves_enthalpy():
     assert valve.m_flow > 0
 
 def test_heatexchanger_transfers_heat_into_refrigerent_cycle():
-    dt = 0.01
+    # heatexchanger only transfers heat if there is a mass flow trough it, for example by a pressure difference
+    # increases enthalpy in the downstream volume
 
     thermal_source = FluidState("Water")
     thermal_source.m_flow = 0.5  # 500 grams per second (ground source, evaporator supply)
     thermal_source.update_from_tp(280, 101325)  # 6.85 °C ground water
+
     # High-pressure subcooled liquid feeding the valve (e.g. condenser outlet)
-    volume_in = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.5, name="in")
+    volume_in = ChargeVolume(fluid="R134a", volume=0.008, initial_p=3e5, initial_quality=0.5, name="in")
+    print(volume_in.t)
     exchanger = HeatExchanger(area=0.1, k_value = 400, secondary_mass = 5.0, boundary_condition= thermal_source, name="Heatexchanger")
     # Low-pressure two-phase mixture downstream of the valve
     volume_out = ChargeVolume(fluid="R134a", volume=0.008, initial_p=2e5, initial_quality=0.5, name="out")
 
+    # state 1: before the runs
     p_in1 = volume_in.p
     p_out1 = volume_out.p
     h_in1 = volume_in.h
     h_out1 = volume_out.h
+    u_out1 = volume_out.U
 
-    for i in range(2):
+    dt = 0.01
+
+    for i in range(5):
         volume_in(volume_out, exchanger, dt)
         exchanger(volume_in, volume_out, dt)
-        assert exchanger.h  > volume_in.h
         volume_out(exchanger, volume_in, dt)
 
         volume_in.integrate( dt)
         volume_out.integrate( dt)
 
+    # state 2: after the runs
     p_in2 = volume_in.p
     p_out2 = volume_out.p
     h_in2 = volume_in.h
     h_out2 = volume_out.h
+    u_out2 = volume_out.U
 
-    print(f"p_in before, after: {p_in1}, {p_in2}")
-    print(f"p_out before, after: {p_out1}, {p_out2}")
+    # pressure decrease trough heat exchanger resistance
+    print(f"p_diff before, after : {(p_in2 - p_out2)} {(p_in1 - p_out1)}")
+    # print(f"p_out before, after: {p_out1}, {p_out2}")
     print(f"valve m_flow: {exchanger.m_flow}")
     print(f"h before, after: {h_out1} , {h_out2}")
+    print(f"h before, after: {u_out1} , {u_out2}")
 
-    assert p_out1 == p_in1
-    # No compressor is driving flow in this isolated test, so the pressure gap
-    # should stay essentially unchanged (small drift from the tiny floor flow
-    # HeatExchanger uses internally, see thermal_objects.py:233).
-    assert (p_in2 - p_out2) == pytest.approx(p_in1 - p_out1, abs=1.0)
+    assert (p_in2 - p_out2) < (p_in1 - p_out1)
+    assert u_out2 > u_out1
     assert h_out2 > h_out1
-    # HeatExchanger floors refrigerant flow to 1e-6 kg/s rather than allowing
-    # exactly zero (thermal_objects.py:233), so that's the value pinned here.
-    assert exchanger.m_flow == pytest.approx(0, abs=1e-5)
+    assert exchanger.m_flow > 0.0
     
