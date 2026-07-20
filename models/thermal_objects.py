@@ -1,5 +1,6 @@
 import math
 import CoolProp.CoolProp as CP
+import pandas as pd
 
 from support.visualization import plot_component_history
 
@@ -72,10 +73,12 @@ class FlowNode:
     def __init__(self, name: str = None):
         # Fall back to the class name (e.g., "Compressor") if no custom name is given
         self.name = name or self.__class__.__name__
-        self.history = {"p": [], "t": [], "h": [], "s": [], "m_flow": []}
+
+    def save_to_history(self):
+        """Every child should override this."""
+        raise NotImplementedError("Subclasses of FlowNode must implement the saving method.")
 
     def get_history(self):
-        import pandas as pd
         df = pd.DataFrame(self.history)
         df.index.name = "Iteration"
         return df
@@ -99,9 +102,7 @@ class SecondaryLoop:
     def get_c_min(self):
         return self.c_min
 
-
-
-class ChargeVolume:
+class ChargeVolume(FlowNode):
     """Fixed-volume refrigerant accumulator (e.g. compressor manifold + condenser,
     or expansion valve + evaporator, lumped together as one 'side' of the cycle).
 
@@ -140,6 +141,18 @@ class ChargeVolume:
         self.h_in = self.h
         self.out_charge: FlowNode = None
 
+        self.history = [self.current_state]
+
+    @property
+    def current_state(self) -> dict:
+        return {
+            f"{self.name}_p": self.p,
+            f"{self.name}_t": self.t,
+            f"{self.name}_h": self.h,
+        }
+
+    def save_to_history(self):
+        self.history.append(self.current_state)
 
     def _refresh_derived_state(self):
         rho = self.m / self.volume
@@ -148,8 +161,6 @@ class ChargeVolume:
         self.t = CP.PropsSI('T', 'D', rho, 'U', u, self.fluid)
         self.h = CP.PropsSI('H', 'D', rho, 'U', u, self.fluid)
         self.q = CP.PropsSI('Q', 'D', rho, 'U', u, self.fluid)
-
-
 
 
     def __call__(self, in_charge: FlowNode| ChargeVolume, out_charge: FlowNode| ChargeVolume, dt: float):
@@ -197,7 +208,6 @@ class ChargeVolume:
         self._refresh_derived_state()
 
 
-
 class HeatExchanger(FlowNode):
     """Heat exchange between one side of the refrigerant charge (a ChargeVolume)
     and a lumped, dynamically-integrated secondary fluid node.
@@ -207,15 +217,31 @@ class HeatExchanger(FlowNode):
     """
     def __init__(self, area: float, k_value: float, secondary_mass: float,
                  boundary_condition: FluidState, pipe_kv: float = 0.0007, name='HeatExchanger'):
-        super().__init__(name)
+        super().__init__(name or "HeatExchanger")
         self.ua = area * k_value
         self.secondary_mass = secondary_mass  # kg, secondary fluid charge held up in the exchanger
         self.reservoir_in = boundary_condition  # fixed upstream supply condition of the secondary loop (t_in, p, m_flow)
         self.reservoir_out = boundary_condition.copy()  # evolving secondary-side bulk/outlet node
         self.pipe_kv = pipe_kv  # flow coefficient of the connecting tube; large relative to ExpansionValve.kv
         self.m_flow = 0.0
-        self.h = None
+        self.h = 0.0
         self.qdot = 0.0
+
+        self.history = [self.current_state]
+
+    @property
+    def current_state(self) -> dict:
+        return {
+            f"{self.name}_mdot": self.m_flow,
+            f"{self.name}_qdot": self.qdot,
+            f"{self.name}_h": self.h,
+            f"{self.name}_t_secondary_in": self.reservoir_in.t,
+            f"{self.name}_t_secondary_out": self.reservoir_out.t
+        }
+
+    def save_to_history(self):
+        self.history.append(self.current_state)
+
 
     def _clamp_to_equilibrium(self, p: float, h_prev: float, h_candidate: float, t_other: float, fluid: str) -> float:
         """Prevent an explicit-Euler step from overshooting past the instantaneous
@@ -308,13 +334,27 @@ class Compressor(FlowNode):
     property of the shared ChargeVolume it feeds."""
     def __init__(self, displacement: float, isentropic_efficiency: float = 0.8,
                  speed_rpm: float = 2900, name='Compressor'):
-        super().__init__(name)
+        super().__init__(name or "Compressor")
         self.displacement = displacement  # m^3/rev
         self.eta_s = isentropic_efficiency
         self.speed_rpm = speed_rpm
         self.power_consumed = 0
         self.m_flow = 0.0
-        self.h = None
+        self.h = 0.0
+
+        self.history = [self.current_state]
+
+    @property
+    def current_state(self) -> dict:
+        return {
+            f"{self.name}_mdot": self.m_flow,
+            f"{self.name}_power_consumed": self.power_consumed,
+            f"{self.name}_h": self.h,
+            f"{self.name}_speed_rpm": self.speed_rpm,
+        }
+
+    def save_to_history(self):
+        self.history.append(self.current_state)
 
     def __call__(self, in_charge: ChargeVolume, out_charge: ChargeVolume, dt: float):
         """Sets m_flow/h: mass leaves in_charge (the suction/low-pressure side,
@@ -346,10 +386,22 @@ class ExpansionValve(FlowNode):
     ChargeVolume via isenthalpic throttling. No longer owns a pressure state
     of its own: pressure is a property of the shared ChargeVolume it feeds."""
     def __init__(self, flow_coefficient: float, name='ExpansionValve'):
-        super().__init__(name)
+        super().__init__(name or "ExpansionValve")
         self.kv = flow_coefficient    # Valve sizing flow coefficient
         self.m_flow = 0.0
-        self.h = None
+        self.h = 0.0
+
+        self.history = [self.current_state]
+
+    @property
+    def current_state(self) -> dict:
+        return {
+            f"{self.name}_mdot": self.m_flow,
+            f"{self.name}_h": self.h,
+        }
+
+    def save_to_history(self):
+        self.history.append(self.current_state)
 
     def __call__(self, in_charge: ChargeVolume, out_charge: ChargeVolume, dt: float):
         """Sets m_flow/h: mass leaves in_charge (high pressure) and enters
