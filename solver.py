@@ -25,20 +25,10 @@ class TransientCycleSolver:
     solver in this project used.
     """
     def __init__(self, block_list: list):
-        self.block_list = block_list
+        self.block_list = block_list    
         self.time = 0.0
         self.dt = 0.0
-
-        # self.history = {"time": []}
-        # for block in block_list:
-        #     if isinstance(block, ChargeVolume):
-        #         self.history[f"p_{block.name}"] = []
-        #         self.history[f"t_{block.name}"] = []
-        #     else:
-        #         self.history[f"m_flow_{block.name}"] = []
-        #         if isinstance(block, HeatExchanger):
-        #             self.history[f"t_secondary_{block.name}"] = []
-        #             self.history[f"qdot_{block.name}"] = []
+        self.time_history = [self.time]
 
     def step(self, dt: float, verbose: bool = False):
         self.dt = dt
@@ -58,18 +48,10 @@ class TransientCycleSolver:
                 block.integrate( dt)
 
         self.time += dt
+        self.time_history.append(self.time)
 
-        # self.history["time"].append(self.time)
         for block in self.block_list:
             block.save_to_history()
-            # if isinstance(block, ChargeVolume):
-            #     self.history[f"p_{block.name}"].append(block.p)
-            #     self.history[f"t_{block.name}"].append(block.t)
-            # else:
-            #     self.history[f"m_flow_{block.name}"].append(block.m_flow)
-            #     if isinstance(block, HeatExchanger):
-            #         self.history[f"t_secondary_{block.name}"].append(block.reservoir_out.t)
-            #         self.history[f"qdot_{block.name}"].append(block.qdot)
 
         if verbose:
             parts = [f"{b.name}: {b.p/1e5:.2f} bar, {b.t-273.15:.1f} °C, quality {b.q}"
@@ -77,15 +59,17 @@ class TransientCycleSolver:
             print(f"Time: {self.time:.3f}s | " + " | ".join(parts))
 
     def get_full_history(self) -> pd.DataFrame:
-        all_component_df = pd.DataFrame()
-        for block in self.block_list:
-            single_block_history = block.get_history()
-            all_component_df = pd.concat([all_component_df, single_block_history], axis = 1)
+        all_component_df = pd.concat([block.get_history() for block in self.block_list], axis=1)
+        # Time lives only on the solver (it's the one thing every block agrees
+        # on), so it's stitched in here as the index rather than tracked
+        # per-block - a standalone block.get_history() still just gets a plain
+        # iteration count.
+        all_component_df.index = pd.Index(self.time_history, name="time")
         return all_component_df
-    
-    def save_full_history(self, filename = "sim_history",filepath = Path.cwd()):
+
+    def save_full_history(self, filename = "sim_history", filepath = Path.cwd()):
         full_history_df = self.get_full_history()
-        full_history_df.to_csv(filepath / f"{filename}.csv", index=False)
+        full_history_df.to_csv(filepath / f"{filename}.csv", index=True)
 
     def show_history(self):
         """User-facing API to plot the recorded trajectories."""

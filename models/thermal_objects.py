@@ -169,7 +169,7 @@ class ChargeVolume(FlowNode):
         next to read - this only reflects what a non-metering node does; the
         actual accumulation happens in integrate(), once every block's output
         for this step is known."""
-        if isinstance(in_charge, FlowNode):
+        if not isinstance(in_charge, ChargeVolume):
             self.m_dot_in = in_charge.m_flow
         else:
             self.m_dot_in = in_charge.m_dot_out
@@ -184,7 +184,7 @@ class ChargeVolume(FlowNode):
         # earlier Compressor/ExpansionValve fixes: mismatched component sizing (or
         # an early transient far from the eventual operating point) can otherwise
         # swing m/U by a large factor in a single explicit-Euler step.
-        if isinstance(self.out_charge, FlowNode):
+        if not isinstance(self.out_charge, ChargeVolume):
             m_dot_out = self.out_charge.m_flow
         else: 
             m_dot_out = self.out_charge.m_dot_in
