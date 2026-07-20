@@ -43,7 +43,7 @@ print("Simulating cycle...")
 timestep = 0.01  # seconds
 solver = TransientCycleSolver([comp, volume_comp_cond, cond, volume_cond_valve, valve,  volume_valve_evap, evap, volume_evap_comp])
 
-n_steps = 100 
+n_steps = 1000
 for i in range(n_steps):
     solver.step(dt=timestep, verbose=(i % 100 == 0 or i == n_steps - 1))
 
@@ -57,4 +57,4 @@ solver.save_full_history(filepath=Path.cwd()/"_basic_experiments")
 
 
 # 5. Visualize the transient trajectories
-# solver.show_history()
+solver.show_history()
