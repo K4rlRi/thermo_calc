@@ -10,7 +10,7 @@ The goal of this simulation is to realistically predict the transient startup be
 `simple_heatpump_cycle.py` sets up a full cycle (compressor, evaporator, expansion valve, condenser, each separated by a ChargeVolume) against ground-source and floor-heating secondary loops, runs it forward with `TransientCycleSolver`, and plots the resulting pressure/temperature/mass-flow trajectories. 
 Example Plot of `solver.show_history()`: 
 
-![Simple Cycle Plot of full cycle](https://github.com/K4rlRi/thermo_calc/blob/dev/demo_simple_cycle/Heatpump_full_cycle_plot.png?raw=true)
+![Simple Cycle Plot of full cycle](https://github.com/K4rlRi/thermo_calc/blob/dev/Heatpump_full_cycle_plot.png?raw=true)
 
 
 ## Modelling approach
