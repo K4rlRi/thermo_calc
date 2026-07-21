@@ -1,17 +1,9 @@
-# from support.tracking import *
-
 import matplotlib.pyplot as plt
 import pandas as pd
 
 def plot_cycle_history(df: pd.DataFrame, title: str = "Heat Pump Cycle"):
     """Plot the transient trajectories of a TransientCycleSolver run: refrigerant
-    and secondary-loop temperatures, refrigerant pressures, and mass flows vs time.
-
-    Column names are discovered by suffix (<name>_p, <name>_t, <name>_t_secondary_in,
-    <name>_t_secondary_out, <name>_mdot, <name>_qdot) so this works for any
-    block_list the solver was built with, not just a fixed condenser/evaporator
-    pair. Time is the DataFrame's index, not a column.
-    """
+    and secondary-loop temperatures, refrigerant pressures, and mass flows vs time. """
     if df.empty:
         print(f"No history data available to plot for {title}.")
         return
@@ -71,11 +63,7 @@ def plot_cycle_history(df: pd.DataFrame, title: str = "Heat Pump Cycle"):
 
 def plot_component_history(df: pd.DataFrame, title: str):
     """Plot every state variable a single component tracked over its own
-    history, one subplot per column. Which quantities exist (and how many)
-    depends on the component type - a ChargeVolume tracks p/t/h, a
-    HeatExchanger also tracks mdot/qdot/secondary temperatures, etc. - so the
-    grid is sized to whatever columns are actually present rather than
-    assuming a fixed layout.
+    history, one subplot per column.
     """
     if df.empty:
         print(f"No history data available to plot for {title}.")
@@ -90,8 +78,6 @@ def plot_component_history(df: pd.DataFrame, title: str):
 
     for i, col in enumerate(cols):
         ax = axs[i // n_cols][i % n_cols]
-        # Every column is this component's own name plus a suffix (e.g.
-        # "Comp-Cond_p") - strip it back off for a readable per-subplot label.
         label = col.removeprefix(f"{title}_")
 
         values = df[col]
@@ -118,9 +104,8 @@ def plot_component_history(df: pd.DataFrame, title: str):
         ax.set_ylabel(ylabel)
         ax.grid(True)
 
-    # Blank out any leftover grid cells (e.g. an odd number of tracked columns)
     for j in range(len(cols), n_rows * n_cols):
-        axs[j // n_cols][j % n_cols].axis('off')
+        axs[j // n_cols][j % n_cols].axis('off')  # Blank out any leftover grid cells (e.g. an odd number of tracked columns)
 
     plt.tight_layout()
     plt.show()
