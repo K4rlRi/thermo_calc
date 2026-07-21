@@ -142,11 +142,6 @@ class ChargeVolume(FlowNode):
 
 
     def __call__(self, in_charge: FlowNode| ChargeVolume, out_charge: FlowNode| ChargeVolume, dt: float):
-        """Record the inflow arriving from the previous edge in the ring and pass
-        it straight through as this node's own m_flow, for whichever edge comes
-        next to read - this only reflects what a non-metering node does; the
-        actual accumulation happens in integrate(), once every block's output
-        for this step is known."""
         if not isinstance(in_charge, ChargeVolume):
             self.m_dot_in = in_charge.m_flow
         else:
@@ -158,18 +153,12 @@ class ChargeVolume(FlowNode):
         
 
     def integrate(self, dt: float):
-        # Bounded to a maximum fractional change per step, same rationale as the
-        # earlier Compressor/ExpansionValve fixes: mismatched component sizing (or
-        # an early transient far from the eventual operating point) can otherwise
-        # swing m/U by a large factor in a single explicit-Euler step.
         if not isinstance(self.out_charge, ChargeVolume):
             m_dot_out = self.out_charge.m_flow
         else: 
             m_dot_out = self.out_charge.m_dot_in
 
         dm_dt = self.m_dot_in - m_dot_out
-        # Energy leaving is carried at *this* volume's own bulk enthalpy (well-mixed
-        # assumption); energy entering is carried at the upstream stream's enthalpy.
         dU_dt = self.m_dot_in * self.h_in - m_dot_out * self.h
 
         max_dm = self.max_relative_step * self.m
@@ -224,9 +213,7 @@ class HeatExchanger(FlowNode):
         try:
             h_limit = CP.PropsSI('H', 'P', p, 'T', t_other, fluid)
         except ValueError:
-            # t_other coincides with the saturation temperature at p (ambiguous quality) -
-            # this only happens when the two streams are already nearly in equilibrium,
-            # i.e. exactly when the risk of a large overshoot is smallest, so skip clamping.
+            # t_other coincides with the saturation temperature at p (ambiguous quality)
             return h_candidate
         lo, hi = sorted((h_prev, h_limit))
         return min(max(h_candidate, lo), hi)

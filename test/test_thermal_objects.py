@@ -1,15 +1,6 @@
 import pytest
 from models.thermal_objects import *
 
-# def test_fluid_state_copy_is_independent():
-#     state = FluidState("R134a")
-#     state.update_from_psat(2e5, quality=1)
-#     copied = state.copy()
-
-#     copied.h += 1e3
-#     assert state.h != copied.h
-#     assert state.p == copied.p
-
 
 def test_compressor_increases_pressure_and_enthalpy():
     dt = 0.01

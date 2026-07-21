@@ -26,8 +26,6 @@ volume_cond_valve = ChargeVolume(fluid=refrigerent, volume=0.005, initial_p=init
 volume_valve_evap = ChargeVolume(fluid=refrigerent, volume=0.008, initial_p=init_p_low, initial_quality=0.3, name="Valve-Evap")
 volume_evap_comp = ChargeVolume(fluid=refrigerent, volume=0.008, initial_p=init_p_low, initial_quality=0.3, name="Evap-Comp")
 
-
-
 # 4. Simulation Execution
 # putting all components in order
 the_cycle = [comp, volume_comp_cond, cond, volume_cond_valve, valve,  volume_valve_evap, evap, volume_evap_comp]
